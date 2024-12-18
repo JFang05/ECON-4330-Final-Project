@@ -1,0 +1,533 @@
+---
+title: "ECON4330 Final Project"
+author: "Jerry Fang, Marcus Murphy, Changhong Liang"
+output: pdf_document
+date: "2022-12-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) 
+```
+
+
+
+## 1. Introduction and Questions
+
+Since October is Breast Cancer Awareness Month, we have decided then to explore Breast Cancer Prediction and diagnosis. We would like to know "What machine-learning methods can we use to predict and diagnose breast cancer, and which of the methods we selected are the most effective in correctly diagnosing?" Furthermore, what observable factors have the strongest contribution to cancer malignancy and benignity prediction?
+
+## 2. Background
+Excluding skin cancers, breast cancer is the most common cancer diagnosed among women in the United States, accounting for nearly 1 in 3 cancers. It is also the second leading cause of cancer death among women after lung cancer. The treatment options and mortality risk from breast cancer crucially depends on whether the tumor is detected early, and whether the tumor is malignant or benign. Early detection of breast cancer could also help slow down the disease's progression and potentially reduce the mortality rate through appropriate therapeutic interventions at the right time. 
+
+Machine learning algorithms applied in healthcare setting are uniquely suited to play a significant role because they are precisely designed to make predictions about the nature (benign vs. belignant) and the progression of the breast cancer based on large number of observable features. The machine learning algorithms' high performance in predicting and diagnosis of the diseases means that well-trained algorithimics can potentially reduce costs of medicine, help doctors and patients make real time decisions, and to save people's lives. The most common data mining modeling goals are classification and prediction.
+
+## 3. Literature Review
+The most related paper to our study is a recent paper titled *"Machine Learning Algorithms For Breast Cancer Prediction And Diagnosis" (Naji, Filali, et al., 2021)* which predicts and diagnoses breast cancer. It explores which machine learning algorithms can more accurately predict the status (benign vs. malignant) of breast cancer among 10 covariates. The methods used in the Naji, Filali et al (2021) study include Support Vector Machine (SVM) (a supervised model that uses classification and regression analysis), Random Forest, Logistic Regression, Decision tree (C4.5) and K-Nearest Neighbours (KNN).They found that Support Vector Machine outperformed all other algorithms and achieved a predictive accuracy of $97.2\%$.  Although there is some overlap with our analysis, we contribute to the existing analysis by also incorporating boosting, classification trees, and classification forests. 
+
+
+
+
+
+## 4. Dataset
+The entire dataset consisted of breast cancer data scraped from the "Breast Cancer Wisconsin (Diagnostic) Data Set. The raw data focuses on fine-needle aspirate images of cell nuclei and features radius (the mean of distances from center of the nucleus to the perimeter), texture (standard deviation of the gray-scale values of the image), perimeter, area, smoothness (local variation in radius lengths), compactness ($\frac{\text{(Perimeter)}^2}{(\text{Area}-1)}$), concavity (severity of concave portions of the contour), concave points (number of concave points on the contour), symmetry, and fractal dimension ($\text{"Coastline Approximation"}-1$). Then, the mean, standard deviation, and worst/largest values of each feature were computed for each value, resulting in 30 real-valued features. 
+The table below provides a snapshot of the raw data. However, we use R to read the csv file and process the data/variables involved in the dataset. 
+
+
+## 5. Methodology
+```{r, echo = FALSE, warning=FALSE,message=FALSE}
+# Install all the necessary packages that are needed for the project
+library(tidyverse)
+library(gbm)
+library(ISLR)
+library(ivreg)
+library(MASS)
+library(leaps)
+library(patchwork)
+library(randomForest)
+library(tree)
+library(glmnet)
+```
+
+# 5.1 text preprocessing
+We have used text preprocessing to read the data and remove any variables that we don't need for the Machine Learning methods.
+Commands we used: dplyr::select(), mutate().
+
+```{r, echo = FALSE, results = 'hide' }
+# Reads/mutates the data, deletes unneccessary columns. 
+Diagnosis <- read.csv('data.csv')
+Diagnosis = Diagnosis %>% 
+  mutate(diagnosis = as_factor(diagnosis)) %>% # Tell the 
+# computer we want to make classification
+  dplyr::select(-id,-X) # Getting rid of the id and blank column to 
+# make sure they won't influence the prediction and classification.
+```
+
+Variable list of dataset:
+
+```{r, echo = FALSE, warning=FALSE,message=FALSE}
+str(Diagnosis)
+```
+
+Summary Statistics of dataset:
+
+```{r, echo = FALSE, warning=FALSE,message=FALSE}
+summary(Diagnosis)
+```
+
+# 5.2 Classification Trees
+We have used this method to create a classification tree to categorize the variables of the dataset and determine whether it is Benign or Malignant. We also used this method to check the test CE using the LOOCV and created the confusion matrix. In addition, we pruned the tree to simplify the number of branches on the tree but still classify whether the diagnosis is Benign or Malignant.  
+
+
+
+```{r, echo=FALSE}
+tree_Diagnosis = tree(diagnosis ~ radius_mean + texture_mean + perimeter_mean + 
+                        area_mean + smoothness_mean + compactness_mean + 
+                        concavity_mean + concave.points_mean + symmetry_mean + 
+                        fractal_dimension_mean + radius_se + texture_se 
+                      + perimeter_se + area_se + smoothness_se + compactness_se + 
+                        concavity_se + concave.points_se + symmetry_se + 
+                        symmetry_se + fractal_dimension_se + radius_worst + texture_worst + 
+                        perimeter_worst + area_worst + smoothness_worst + 
+                        compactness_worst + concavity_worst + 
+                        concave.points_worst + symmetry_worst + 
+                        fractal_dimension_worst, Diagnosis)
+
+# Within this dataset, we can not use the form '~.' to represent all other 
+# parameters due to the missing values.
+```
+
+
+Plots the tree and provides a summary via the CART algorithm. 
+
+```{r, echo = FALSE, fig1, fig.height = 12, fig.width = 10, fig.align = 'center'}
+# Plots the tree and provides a summary via the CART algorithm. 
+plot(tree_Diagnosis)
+text(tree_Diagnosis, cex = 0.5)
+summary(tree_Diagnosis)
+```
+
+Use the LOOCV to check the test CE and creates the confusion matrix. 
+
+```{r, echo = FALSE}
+# Use the LOOCV to check the test CE
+N = nrow(Diagnosis)
+set.seed(11)
+nfolds = 569 # We have 569 samples in total
+Diagnosis_classification = Diagnosis%>% 
+                             mutate(Result = if_else(diagnosis == "B", 1, 0)) %>%
+                             dplyr::select(-diagnosis)
+Diagnosis_classification = Diagnosis_classification %>% mutate(Result = as_factor(Result)) 
+
+
+#randomly shuffle the data
+Diagnosis_classification = Diagnosis_classification[sample(N),]
+
+#create equal size partitions of the indices
+folds = cut(seq(1, N), breaks = nfolds, labels=FALSE)
+
+for(i in 1:nfolds) {
+      
+      indices = which(folds==i)
+      testData = Diagnosis_classification %>% slice(indices)
+      trainData = Diagnosis_classification %>% slice(-indices)
+      
+      tree.Diagnosis_classification = tree(Result ~ radius_mean + texture_mean + 
+                                             perimeter_mean + area_mean + 
+                                             smoothness_mean + compactness_mean + 
+                                             concavity_mean + concave.points_mean + 
+                                             symmetry_mean + fractal_dimension_mean + 
+                                             radius_se + texture_se + perimeter_se +
+                                             area_se + smoothness_se + compactness_se + 
+                                             concavity_se + concave.points_se + 
+                                             symmetry_se + symmetry_se + 
+                                             fractal_dimension_se + radius_worst + 
+                                             texture_worst + perimeter_worst + 
+                                             area_worst + smoothness_worst + 
+                                             compactness_worst + concavity_worst + 
+                                             concave.points_worst + symmetry_worst + 
+                                             fractal_dimension_worst, trainData)
+      
+      
+      predict.Diagnosis_classification = predict(tree.Diagnosis_classification, 
+                                                 data=testData, type ="class" )
+      test.outcomes_classification = testData$Result
+}
+# Create the confusion matrix
+table(predict.Diagnosis_classification, Diagnosis_classification$Result[-569]) 
+# Exclude the last row as the last row was taken as the testing set in 
+# Leave-one-out cross validation in the last loop.
+
+```
+
+
+Pruning the classification trees
+
+```{r, echo = FALSE,fig2}
+# Pruning the classification trees
+set.seed(111)
+
+tree.fit = tree(Result ~radius_mean + texture_mean + perimeter_mean + area_mean + 
+                  smoothness_mean + compactness_mean + concavity_mean + concave.points_mean + 
+                  symmetry_mean + fractal_dimension_mean + radius_se + texture_se + 
+                  perimeter_se + area_se + smoothness_se + compactness_se + concavity_se + 
+                  concave.points_se + symmetry_se + symmetry_se + fractal_dimension_se + 
+                  radius_worst + texture_worst + perimeter_worst + area_worst + 
+                  smoothness_worst + compactness_worst + concavity_worst + 
+                  concave.points_worst + symmetry_worst + fractal_dimension_worst,
+                Diagnosis_classification)
+
+cv.Diagnosis_classification = cv.tree(tree.fit, FUN = prune.misclass)
+cv.results = tibble(tree_size = cv.Diagnosis_classification$size, CV_error = 
+                      cv.Diagnosis_classification$dev)
+cv.Diagnosis_classification
+
+ggplot(cv.results, aes(x = tree_size, y = CV_error)) +
+  geom_point() +
+  geom_line() +
+  xlab("Tree size") +
+  ylab("CV error")
+```
+
+Plots the pruned tree
+
+```{r, echo = FALSE, fig3, fig.height = 10, fig.width = 12,  fig.align = 'center'}
+# Creates the pruned tree
+prune.diagnosis = prune.misclass(tree.fit, best = 12)
+plot(prune.diagnosis, cex = 0.0001)
+text(prune.diagnosis, pretty = 0)
+```
+
+Double checks the CE via LOOCV and again, this creates the confusion matrix
+
+```{r, echo = FALSE}
+# double check the CE via LOOCV
+N = nrow(Diagnosis)
+set.seed(12345)
+nfolds = 569 # We have 569 samples in total
+
+
+#randomly shuffle the data
+Diagnosis_classification_tune = Diagnosis_classification[sample(N),]
+
+#create equal size partitions of the indices
+folds = cut(seq(1, N), breaks = nfolds, labels=FALSE)
+
+for(i in 1:nfolds) {
+      
+      indices = which(folds==i)
+      testData_tune = Diagnosis_classification_tune %>% slice(indices)
+      trainData_tune = Diagnosis_classification_tune %>% slice(-indices)
+      
+      
+      predict.Diagnosis_classification_tune = predict(prune.diagnosis, data=testData_tune, type ="class" )
+      test.outcomes_classification_tune = testData_tune$Result
+}
+# Creates the confusion matrix
+table(predict.Diagnosis_classification_tune[-570], Diagnosis_classification$Result) 
+# Exclude the last row as the last row was taken as the testing set in 
+# Leave-one-out cross validation in the last loop.
+```
+
+# 5.3 Classification Forest
+We have used classification forests to obtain the OOB as well as the error rate for whether the Diagnosis is Benign or Malignant. The chart provides different error rates. We also tuned $m$ with a plot and chose $m$ that corresponds with the lowest OOB Error always changes. In this case, we decided to draw the m presenting most in recurrent running of the codes and ended up choosing $m=5$. Finally, we create importance plots to determine the accuracy as well as the Gini coefficient. 
+
+Trains the model and finds the error rate (OOB, Malignant, and Benign)
+
+```{r, echo = FALSE}
+# training the model
+set.seed(123)
+forest.diagnosis = randomForest(diagnosis~radius_mean + texture_mean + 
+                                  perimeter_mean + area_mean + smoothness_mean + 
+                                  compactness_mean + concavity_mean + concave.points_mean + 
+                                  symmetry_mean + fractal_dimension_mean + radius_se + 
+                                  texture_se + perimeter_se + area_se + smoothness_se +
+                                  compactness_se + concavity_se + concave.points_se + 
+                                  symmetry_se + symmetry_se + fractal_dimension_se + 
+                                  radius_worst + texture_worst + perimeter_worst + 
+                                  area_worst + smoothness_worst + compactness_worst + 
+                                  concavity_worst + concave.points_worst + 
+                                  symmetry_worst + fractal_dimension_worst, 
+                          data = Diagnosis,
+                          nTrees = 500, 
+                          importance = TRUE)
+forest.diagnosis$err.rate[500,] # finds the error rate (OOB, Malignant, and Benign)
+```
+
+Find the choice of m using tuneRF
+
+```{r, echo = FALSE}
+# Choice of m
+X = model.matrix(diagnosis ~ radius_mean + texture_mean + perimeter_mean + 
+                   area_mean + smoothness_mean + compactness_mean + concavity_mean + 
+                   concave.points_mean + symmetry_mean + fractal_dimension_mean + 
+                   radius_se + texture_se + perimeter_se + area_se + smoothness_se + 
+                   compactness_se + concavity_se + concave.points_se + symmetry_se + 
+                   symmetry_se + fractal_dimension_se + radius_worst + texture_worst + 
+                   perimeter_worst + area_worst + smoothness_worst + compactness_worst + 
+                   concavity_worst + concave.points_worst + symmetry_worst + fractal_dimension_worst, Diagnosis)
+y = Diagnosis$diagnosis
+tuneRF(X, y, plot=TRUE, trace=TRUE, doBest=TRUE)
+```
+
+As shown in the plot, the m corresponding with the lowest OOB Error always changes. 
+So we decided to draw the m that occurs the most in recurrent codes. In this case, we choose 8.
+
+
+Now, we will use $m=8$ (or $mtry=8$) to find the error rate (OOB, Malignant, and Benign).  
+
+```{r, echo = FALSE,fig4, fig.height = 5, fig.width = 7, fig.align = 'center'}
+
+set.seed(1234)
+forest.diagnosis = randomForest(diagnosis ~ radius_mean + texture_mean + 
+                                  perimeter_mean + area_mean + smoothness_mean + 
+                                  compactness_mean + concavity_mean + concave.points_mean + 
+                                  symmetry_mean + fractal_dimension_mean + radius_se + 
+                                  texture_se + perimeter_se + area_se + smoothness_se + 
+                                  compactness_se + concavity_se + concave.points_se + 
+                                  symmetry_se + symmetry_se + fractal_dimension_se + 
+                                  radius_worst + texture_worst + perimeter_worst + 
+                                  area_worst + smoothness_worst + compactness_worst + 
+                                  concavity_worst + concave.points_worst + symmetry_worst + 
+                                  fractal_dimension_worst, 
+                          data = Diagnosis,
+                          ntrees =500 , 
+                          mtry = 8,
+                          importance = TRUE)
+forest.diagnosis$err.rate[500,]
+```
+
+Creates the first Importance Plot. Note: the plot below provides a measure of the mean decrease in prediction accuracy anda measure of the total decrease in training MSE (or RSS) resulting from plots over that variable averaged over all trees.
+
+```{r, echo = FALSE,fig5, fig.height = 5, fig.width = 10, fig.align = 'center'}
+# Creates the first Importance Plot. Note: first plot provides a measure of the 
+# mean decrease in prediction accuracy while the second provides a measure of 
+# the total decrease in training MSE (or RSS) resulting from plots over that 
+# variable averaged over all trees. 
+varImpPlot(forest.diagnosis, n.var = 5)
+dev.copy(png, "Importance plot1.png")
+dev.off()
+```
+
+
+Creates the Second Importance Plot. Note: the plot below provides a measure of the mean decrease in prediction accuracy and a measure of the total decrease in training MSE (or RSS) resulting from plots over that variable averaged over all trees. 
+
+
+```{r, echo = FALSE,fig6, fig.height = 5, fig.width = 10, fig.align = 'center'}
+# Creates the first Importance Plot. Note: first plot provides a measure of the 
+# mean decrease in prediction accuracy while the second provides a measure of 
+# the total decrease in training MSE (or RSS) resulting from splots over that 
+# variable averaged over all trees. 
+varImpPlot(forest.diagnosis, n.var = 5)
+dev.copy(png, "Importance plot1.png")
+dev.off()
+```
+
+# 5.4 Logistics regression (multi) 
+When running the Logistics regression Machine Learning method, we found the coefficients as well as the standard errors of each of the variables. 
+
+Runs a Logistic regression using the glm function, and diagnosis `results = binomial` and provides the corresponding summary statistics
+
+```{r, echo = FALSE}
+# Running a Logistic regression using the glm function, and diagnosis results = binomial. 
+logit_fit_Diagnosis = glm(diagnosis ~ radius_mean + texture_mean + perimeter_mean + 
+                            area_mean + smoothness_mean + compactness_mean + 
+                            concavity_mean + concave.points_mean + symmetry_mean + 
+                            fractal_dimension_mean + radius_se + texture_se + 
+                            perimeter_se + area_se + smoothness_se + compactness_se + 
+                            concavity_se + concave.points_se + symmetry_se + symmetry_se + 
+                            fractal_dimension_se + radius_worst + texture_worst + 
+                            perimeter_worst + area_worst + smoothness_worst + 
+                            compactness_worst + concavity_worst + concave.points_worst + 
+                            symmetry_worst + fractal_dimension_worst, 
+                          data = Diagnosis, family = binomial)
+summary(logit_fit_Diagnosis)
+```
+
+Provides the coefficients for each of the variables from the Logistics Regression. 
+
+```{r, echo=FALSE}
+coef(logit_fit_Diagnosis)
+```
+
+
+# 5.5 Boosting
+Boosting is thus far more accurate for predictions. The coefficients seem to imply that as many of the cell nuclei become larger and more dense, the diagnosis would become more serious. Hence, it is important to check regularly for suspicious lumps. 
+
+
+Boosted classification model is computed using the `gbm()`, and the argument, `distribution = bernoulli`, implies we are using classification trees. This provides information about the relative influence via dataset as well as in a graph. 
+
+
+```{r, echo = FALSE}
+# Boosted classification model is computed using the 'gbm()', and the argument, 'distribution = bernoulli', implies we are using classification trees. 
+set.seed(114514)
+boost.diagnosis = gbm((unclass(diagnosis)-1) ~ radius_mean + texture_mean + 
+                        perimeter_mean + area_mean + smoothness_mean + compactness_mean + 
+                        concavity_mean + concave.points_mean + symmetry_mean + 
+                        fractal_dimension_mean + radius_se + texture_se + 
+                        perimeter_se + area_se + smoothness_se + compactness_se + 
+                        concavity_se + concave.points_se + symmetry_se + symmetry_se + 
+                        fractal_dimension_se + radius_worst + texture_worst + 
+                        perimeter_worst + area_worst + smoothness_worst + compactness_worst + 
+                        concavity_worst + concave.points_worst + symmetry_worst + 
+                        fractal_dimension_worst, 
+                    data = Diagnosis,
+                    distribution = "bernoulli",
+                    n.trees = 1000,
+                    interaction.depth = 6,  #tree depth
+                    shrinkage = 0.05,  #default
+                    cv.folds = 5,  #for selecting optimal n.trees
+                    n.cores = NULL, 
+                    verbose = FALSE
+  )
+summary(boost.diagnosis)
+
+
+```
+
+Provides the influence of each variable, sort of similar to importance plots 
+
+
+```{r, echo = FALSE}
+# Provides the influence of each variable, sort of similar to importance plots 
+# in random forests.
+summary(boost.diagnosis, method = permutation.test.gbm)
+```
+
+
+Tuning parameter choice, selecting all tuning parameters optimally through hyper-parameter search. 
+
+```{r, echo = FALSE}
+# Tuning parameter choice, selecting all tuning parameters optimally through 
+# hyper-parameter search. 
+hyper_grid <- expand.grid(
+  shrinkage = c(0.001,0.0025,0.005,0.01,0.025,0.05,0.1,0.25,0.5),
+  interaction.depth = c(1:9),
+  optimal_trees = 0,               # a place to dump results
+  min_deviance = 0                     # a place to dump results
+)
+
+# total number of combinations
+nrow(hyper_grid)
+```
+
+Loop through each possible shrinkage and tree depth combination, determining 
+the optimal number of trees for each, as well as the corresponding minimal 
+deviance (where minimum is over number of trees holding shrinkage and tree depth fixed)
+
+
+```{r, echo = FALSE}
+# Loop through each possible shrinkage and tree depth combination, determining 
+# the optimal number of trees for each, as well as the corresponding minimal 
+# deviance (where minimum is over number of trees holding shrinkage and tree depth fixed)
+for(i in 1:nrow(hyper_grid)) {
+  
+  # reproducibility
+  set.seed(12345)
+  
+  # train model
+  gbm.tune <- gbm(
+    formula = (unclass(diagnosis)-1) ~ radius_mean + texture_mean + perimeter_mean + 
+      area_mean + smoothness_mean + compactness_mean + concavity_mean + 
+      concave.points_mean + symmetry_mean + fractal_dimension_mean + radius_se + 
+      texture_se + perimeter_se + area_se + smoothness_se + compactness_se + 
+      concavity_se + concave.points_se + symmetry_se + symmetry_se + 
+      fractal_dimension_se + radius_worst + texture_worst + perimeter_worst + 
+      area_worst + smoothness_worst + compactness_worst + concavity_worst + 
+      concave.points_worst + symmetry_worst + fractal_dimension_worst,
+    distribution = "bernoulli",
+    data = Diagnosis,
+    n.trees = 1000,
+    interaction.depth = hyper_grid$interaction.depth[i],
+    shrinkage = hyper_grid$shrinkage[i],
+    cv.folds = 5,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE
+  )
+  
+  # add min training error and trees to grid
+  hyper_grid$optimal_trees[i] = which.min(gbm.tune$cv.error)
+  hyper_grid$min_deviance[i] = min(gbm.tune$cv.error)
+}
+
+hyper_grid %>% 
+  arrange(min_deviance) %>%
+  head(10)
+```
+
+
+The optimal tuning parameters are shrinkage = 0.1, interaction.depth = 1, and number of trees = 346. 
+
+```{r, echo = FALSE}
+# We found the optimal tuning parameters are shrinkage = 0.1, interaction.depth = 1, and number of trees = 346. 
+
+set.seed(123456)
+  
+  # the model after tuning
+  gbm.best <- gbm(
+    formula = (unclass(diagnosis)-1) ~ radius_mean + texture_mean + 
+      perimeter_mean + area_mean + smoothness_mean + compactness_mean + 
+      concavity_mean + concave.points_mean + symmetry_mean + fractal_dimension_mean + 
+      radius_se + texture_se + perimeter_se + area_se + smoothness_se + compactness_se + 
+      concavity_se + concave.points_se + symmetry_se + symmetry_se + 
+      fractal_dimension_se + radius_worst + texture_worst + perimeter_worst + 
+      area_worst + smoothness_worst + compactness_worst + concavity_worst + 
+      concave.points_worst + symmetry_worst + fractal_dimension_worst,
+    distribution = "bernoulli",
+    data = Diagnosis,
+    n.trees = 346,
+    interaction.depth = 1,
+    shrinkage = 0.1,
+    cv.folds = 5,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE
+  )
+  summary(gbm.best)
+```
+
+
+
+# 6. Findings
+For the Classification Tree, we found that the Misclassification error rate to be approximately $0.1757 = \frac{10}{569}$. We also double checked the CE via LOOCV and created the confusion matrix.
+
+We also found the error rates of OOB, Benign and Malignant using the Classification Forest method. We know that the m corresponding with the lowest OOB Error always changes, so we decided to draw the m that occurs the most in recurrent codes. In this case, we chose $m=8$ (or $mtry=8) to find the corresponding error rates of OOB, Benign, and Malignant.
+
+For boosting, we found that concave.points_worst, perimeter_worst, concave.points_mean, area_worst, and radius_worst are the most important variables for this study. 
+
+We found that there is a strong relationship between breast cancer malignancy and cell parameters. That is, the more malignant the breast cancer is, the more abnormal and aggressive the cancer cells are in terms of their size, shape, and other characteristics. For example, malignant breast cancer cells are larger, irregular in shape, and have more abnormal nuclei compared to normal breast cells. Also, malignant cells may experience increased proliferation and migration, as well as lack of adhesion to other cells, which contributes to the spread of cancer. Overall, the cell parameters of breast cancer cells provide important clues about malignancy of cancer helping us to guide treatment decisions/options. 
+
+
+
+
+
+
+# 7. Conclusion and Final Thoughts
+On the project as a whole, it should be noted that all the results are obtained using the WBCD database; therefore it is possible that our results are only applicable to the population of patients in the sample. It would have ideal if we could valicate our predictions in other samples that are not used in the training the algorithms. This could be considered as a limitation of our work. In future work, we would like to validate the findings using samples drawn from other settings. Although this study shows accuracy of machine learning methods on data of cell parameters, it should be noted that misclassifications can sometimes be detected from demographic variables. For example, if a patient with a lump has a history of breast cancer in their family, doctors will be more likely to further investigate a benign lump than say, a seemingly healthy person with no history. The reverse side of the argument is not as clean: a misclassified malignancy will be less likely to be disproven, and physicians will be more likely to treat it as soon as possible. This is not necessarily a good thing, though, because many cancer prevention and care methods have less-than-ideal or even very strong negative side effects (e.g., Chemotherapy and radiation can both cause infertility, and radiation therapy can also cause cancer). Hence, prediction accuracy is extremely important.
+
+In summary, this study mainly shows the accuracy of different machine learning methods in using breast cell parameters in predicting the type of breast cancers. These parameters prove to be  effective in predicting, but prediction would likely be enhanced through the inclusion of demographic variables such as family medical history, diet, whether the subject regularly exercises, etc. The study emphasizes the need to regularly inspect oneself for irregularities, as it is often these lesions with dense and large cells that prove to be malignant.
+
+# Role of Assignment
+**Jerry Fang:** Jerry scraped, cleaned, and preprocessed the Data. Came up with formula for logistics regression as well as classification forests/trees and boosting. Debugged code when necessary. Browsed for information from articles to include in the Conclusion and Final Thoughts section. Formatted Bibliography. 
+
+**Marcus Murphy:** Idea for project, focusing on using ML methods for diagnosing breast cancer. Write-ups, part of presentation.
+
+**Changhong Liang:** scraping, cleaning and preprocessing the Data, building classification tree, classification forest and boosting tree. Debugging and tuning all the models. Finding relevant essays to supplement the background, findings and conclusion.
+
+
+# References:
+
+Naji, M.A. et. al.(2021). Procedia Computer Science, Volume 191, 2021, Pages 487-492. Machine Learning Algorithms For Breast Cancer Prediction And Diagnosis. https://doi.org/10.1016/j.procs.2021.07.062
+
+"How is Breast Cancer Diagnosed?" Centers for Disease Control and Prevention, 26 Sept. 2022,
+https://www.cdc.gov/cancer/breast/basic_info/diagnosis.htm
+
+"Breast Cancer Statistics: How Common Is Breast Cancer?" American Cancer Society, 
+https://www.cancer.org/cancer/breast-cancer/about/how-common-is-breast-cancer.html 
+
+
+Sauter, Edward R. "Breast Cancer Prevention: Current Approaches and Future Directions." European Journal of Breast Health, US National Library of Medicine, 1 Apr. 2018, 
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5939980/ 
+
+
+
+
+
+
